@@ -15,8 +15,9 @@ Single Maven module, no tests, no lint/formatter config, no CI.
 
 - Git protocol is under `/git/{repo}.git/...`. The `.git` suffix is required;
   `/git/demo` returns 404 by design.
-- `GET /` is **not** a Git web UI. It is `RepositoryListController`, a plain HTML
-  table of repositories. There is no file tree, diff, or history browsing.
+- `GET /` is **not** a Git web UI. It lists repositories and has a create form.
+  `GET /repo/{name}` shows file paths/sizes plus an upload form; there is no file
+  content, diff, or history browsing.
 - A demo bare repo `repos/demo.git` (branch `main`) is seeded on startup.
 - `repos/` is runtime data and is gitignored. Delete it to reseed on next start;
   set `app.git.seed-demo=false` to disable.
@@ -31,6 +32,12 @@ Single Maven module, no tests, no lint/formatter config, no CI.
 - `UploadPackFactory` handles clone/fetch; `ReceivePackFactory` handles push.
   Push is enabled and unauthenticated by default; set `app.git.allow-push=false`
   to disable. No Spring Security is wired up.
+- Web write paths: `POST /repos` (`RepositoryListController`) creates a bare repo;
+  `POST /repo/{name}/upload` (`RepositoryController`) commits uploaded files via
+  `RepositoryAdminService`, which does temp clone -> write -> commit -> push back.
+  Writes are serialized per repo with a `ReentrantLock`.
+- `RepositoryAdminService.canonicalName` appends `.git`, so `/repo/demo` and
+  `/repo/demo.git` both work. Git protocol URLs still require `.git`.
 - Add business logic in the factories via `PreReceiveHook`, `PostReceiveHook`,
   `AdvertiseRefsHook`, not in the list controller.
 - Config binds from `app.git.*` in `application.yml` into `GitProperties`.
@@ -45,5 +52,9 @@ Single Maven module, no tests, no lint/formatter config, no CI.
 - `DemoRepositorySeeder` creates a temp non-bare repo, commits, then clones it
   bare. If you replace it, do not hand-build trees with `TreeFormatter` without
   handling Git tree entry ordering.
+- Web create/upload and `git push` are unauthenticated. Do not expose them as-is.
+- Upload paths are validated in `RepositoryAdminService.safeResolve`: reject
+  absolute paths, `..`, `.git`, and anything escaping the work tree.
+- Multipart limits live under `spring.servlet.multipart` (20MB file / 200MB request).
 - WSL2: the app binds `*:8080`. If a Windows browser on `localhost:8080` shows a
   different service, use the WSL IP (`hostname -I`).

@@ -9,21 +9,21 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Stream;
 
-import com.example.gitserver.config.GitProperties;
+import com.example.gitserver.service.RepositoryAdminService;
 
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
-
-import jakarta.servlet.http.HttpServletRequest;
 
 @Controller
 public class RepositoryListController {
@@ -31,16 +31,17 @@ public class RepositoryListController {
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
-    private final GitProperties properties;
+    private final RepositoryAdminService adminService;
 
-    public RepositoryListController(GitProperties properties) {
-        this.properties = properties;
+    public RepositoryListController(RepositoryAdminService adminService) {
+        this.adminService = adminService;
     }
 
     @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
-    public String list(HttpServletRequest request) throws IOException {
-        Path root = properties.getRoot().toAbsolutePath().normalize();
+    public String list(@RequestParam(required = false) String ok,
+                       @RequestParam(required = false) String error) throws IOException {
+        Path root = adminService.getRoot();
         Files.createDirectories(root);
 
         List<RepositoryView> repositories;
@@ -53,17 +54,25 @@ public class RepositoryListController {
         }
 
         String baseUrl = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
-        return render(baseUrl, repositories);
+        return render(baseUrl, repositories, ok, error);
+    }
+
+    @PostMapping("/repos")
+    public String create(@RequestParam String name, RedirectAttributes redirect) {
+        try {
+            String repository = adminService.createRepository(name);
+            redirect.addAttribute("ok", "已创建仓库 " + repository);
+            return "redirect:/repo/" + repository;
+        } catch (Exception e) {
+            redirect.addAttribute("error", messageOf(e));
+            return "redirect:/";
+        }
     }
 
     private RepositoryView describe(Path repositoryDir) {
-        try (Repository repository = new FileRepositoryBuilder()
-                .setGitDir(repositoryDir.toFile())
-                .setBare()
-                .build()) {
-
+        try (Repository repository = adminService.open(repositoryDir)) {
             ObjectId head = repository.resolve(Constants.HEAD);
-            String summary = "(empty repository)";
+            String summary = "(空仓库)";
             Instant committedAt = null;
 
             if (head != null) {
@@ -78,69 +87,58 @@ public class RepositoryListController {
                     repository.getBranch(), summary, committedAt);
         } catch (IOException e) {
             return new RepositoryView(repositoryDir.getFileName().toString(),
-                    "?", "(unreadable: " + e.getMessage() + ")", null);
+                    "?", "(无法读取: " + e.getMessage() + ")", null);
         }
     }
 
-    private String render(String baseUrl, List<RepositoryView> repositories) {
+    private String render(String baseUrl, List<RepositoryView> repositories, String ok, String error) {
         StringBuilder rows = new StringBuilder();
         if (repositories.isEmpty()) {
-            rows.append("<tr><td colspan=\"4\" class=\"empty\">No repositories yet.</td></tr>");
+            rows.append("<tr><td colspan=\"5\" class=\"empty\">还没有仓库，先在下方创建一个。</td></tr>");
         }
         for (RepositoryView repo : repositories) {
             String cloneUrl = baseUrl + "/git/" + repo.name();
             rows.append("<tr>")
-                    .append("<td class=\"name\">").append(escape(repo.name())).append("</td>")
-                    .append("<td>").append(escape(repo.branch())).append("</td>")
-                    .append("<td>").append(escape(repo.summary())).append("</td>")
+                    .append("<td class=\"name\"><a href=\"/repo/").append(Html.escape(repo.name())).append("\">")
+                    .append(Html.escape(repo.name())).append("</a></td>")
+                    .append("<td>").append(Html.escape(repo.branch())).append("</td>")
+                    .append("<td>").append(Html.escape(repo.summary())).append("</td>")
                     .append("<td>").append(repo.committedAt() == null ? "-" : FMT.format(repo.committedAt()))
                     .append("</td>")
-                    .append("<td><code>git clone ").append(escape(cloneUrl)).append("</code></td>")
+                    .append("<td><code>git clone ").append(Html.escape(cloneUrl)).append("</code></td>")
                     .append("</tr>");
         }
 
-        return """
-                <!doctype html>
-                <html lang="en">
-                <head>
-                  <meta charset="utf-8">
-                  <title>Git repositories</title>
-                  <style>
-                    body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; }
-                    h1 { font-size: 1.4rem; }
-                    table { border-collapse: collapse; width: 100%; }
-                    th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid #e5e7eb; }
-                    th { background: #f9fafb; font-size: .8rem; text-transform: uppercase; color: #6b7280; }
-                    td.name { font-weight: 600; }
-                    code { background: #f3f4f6; padding: .15rem .4rem; border-radius: 4px; }
-                    .empty { color: #9ca3af; text-align: center; }
-                  </style>
-                </head>
-                <body>
-                  <h1>Git repositories</h1>
-                  <p>Repositories are served over the Git smart HTTP protocol. Clone with the command shown below.</p>
-                  <table>
-                    <thead>
-                      <tr><th>Repository</th><th>Branch</th><th>Last commit</th><th>Committed at</th><th>Clone</th></tr>
-                    </thead>
-                    <tbody>
+        String body = """
+                <h1>Git 仓库</h1>
+                """ + Html.banner(ok, error) + """
+                <p class="muted">仓库通过 Git smart HTTP 协议提供。点击仓库名可上传文件或目录；浏览器不能浏览文件内容。</p>
+                <table>
+                  <thead>
+                    <tr><th>仓库</th><th>分支</th><th>最近提交</th><th>提交时间</th><th>Clone</th></tr>
+                  </thead>
+                  <tbody>
                 """ + rows + """
-                    </tbody>
-                  </table>
-                </body>
-                </html>
+                  </tbody>
+                </table>
+
+                <div class="card">
+                  <h2>新建仓库</h2>
+                  <form method="post" action="/repos">
+                    <label for="name">仓库名（可自动补 .git）</label>
+                    <input id="name" type="text" name="name" placeholder="my-project"
+                           pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required>
+                    <button type="submit">创建</button>
+                  </form>
+                </div>
                 """;
+
+        return Html.page("Git 仓库", body);
     }
 
-    private static String escape(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&#39;");
+    private static String messageOf(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
     }
 
     private record RepositoryView(String name, String branch, String summary, Instant committedAt) {
