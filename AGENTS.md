@@ -5,8 +5,8 @@ Single Maven module, no tests, no lint/formatter config, no CI.
 
 ## Commands
 
-- Build: `mvn -B -DskipTests package` -> `target/git-server-0.0.1-SNAPSHOT.jar`
-- Run: `mvn spring-boot:run` or `java -jar target/git-server-0.0.1-SNAPSHOT.jar`
+- Build: `mvn -B -DskipTests package` -> `target/git-server-0.0.1.jar`
+- Run: `mvn spring-boot:run` or `java -jar target/git-server-0.0.1.jar`
 - There is no test suite; `mvn test` runs nothing. Verify manually with:
   `git clone http://localhost:8080/git/demo.git /tmp/clone-check`
 - Default port is 8080. If startup fails, check `ss -ltnp | grep 8080`.

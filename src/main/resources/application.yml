@@ -8,6 +8,7 @@ spring:
       max-request-size: 200MB
 
 app:
+  version: "@project.version@"
   git:
     root: ./repos
     seed-demo: true

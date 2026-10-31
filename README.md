@@ -4,6 +4,10 @@
 
 不需要安装原生 `git` 服务端，也不需要额外部署 Gitea/GitLab；Git 协议端点就跑在 Spring Boot 的 Tomcat 里。
 
+## 界面预览
+
+![首页](docs/home.png)
+
 ## 环境要求
 
 - JDK 17+
@@ -18,7 +22,7 @@ mvn -B -DskipTests package
 
 # 运行（二选一）
 mvn spring-boot:run
-java -jar target/git-server-0.0.1-SNAPSHOT.jar
+java -jar target/git-server-0.0.1.jar
 ```
 
 启动后会监听 `8080`，并自动创建示例仓库 `repos/demo.git`。

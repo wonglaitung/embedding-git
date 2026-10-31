@@ -16,6 +16,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,9 +33,12 @@ public class RepositoryListController {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final RepositoryAdminService adminService;
+    private final String version;
 
-    public RepositoryListController(RepositoryAdminService adminService) {
+    public RepositoryListController(RepositoryAdminService adminService,
+                                    @Value("${app.version:dev}") String version) {
         this.adminService = adminService;
+        this.version = version;
     }
 
     @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
@@ -92,48 +96,86 @@ public class RepositoryListController {
     }
 
     private String render(String baseUrl, List<RepositoryView> repositories, String ok, String error) {
-        StringBuilder rows = new StringBuilder();
+        StringBuilder cards = new StringBuilder();
         if (repositories.isEmpty()) {
-            rows.append("<tr><td colspan=\"5\" class=\"empty\">还没有仓库，先在下方创建一个。</td></tr>");
+            cards.append("""
+                    <div class="empty-state">
+                      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                      </svg>
+                      <h2>还没有仓库</h2>
+                      <p class="muted">用上方的表单创建第一个仓库。</p>
+                    </div>
+                    """);
         }
+
         for (RepositoryView repo : repositories) {
             String cloneUrl = baseUrl + "/git/" + repo.name();
-            rows.append("<tr>")
-                    .append("<td class=\"name\"><a href=\"/repo/").append(Html.escape(repo.name())).append("\">")
-                    .append(Html.escape(repo.name())).append("</a></td>")
-                    .append("<td>").append(Html.escape(repo.branch())).append("</td>")
-                    .append("<td>").append(Html.escape(repo.summary())).append("</td>")
-                    .append("<td>").append(repo.committedAt() == null ? "-" : FMT.format(repo.committedAt()))
-                    .append("</td>")
-                    .append("<td><code>git clone ").append(Html.escape(cloneUrl)).append("</code></td>")
-                    .append("</tr>");
+            cards.append("<article class=\"repo-card\">")
+                    .append("<div class=\"repo-card-head\">")
+                    .append("<span class=\"repo-icon\">").append(Html.repoIcon()).append("</span>")
+                    .append("<a class=\"repo-name\" href=\"/repo/").append(Html.escape(repo.name())).append("\">")
+                    .append(Html.escape(repo.name())).append("</a>")
+                    .append("<span class=\"badge\">").append(Html.escape(repo.branch())).append("</span>")
+                    .append("</div>")
+                    .append("<p class=\"repo-commit\">").append(Html.escape(repo.summary())).append("</p>")
+                    .append("<p class=\"muted small\">")
+                    .append(repo.committedAt() == null ? "尚未提交" : FMT.format(repo.committedAt()))
+                    .append("</p>")
+                    .append("<div class=\"clone-row\"><code>git clone ")
+                    .append(Html.escape(cloneUrl)).append("</code>")
+                    .append("<button class=\"btn btn-ghost\" type=\"button\" data-copy=\"")
+                    .append(Html.escape(cloneUrl)).append("\">复制</button></div>")
+                    .append("</article>");
         }
 
         String body = """
-                <h1>Git 仓库</h1>
+                <section class="hero">
+                  <div>
+                    <h1>Git 仓库</h1>
+                    <p class="muted">通过 Git smart HTTP 提供仓库，也可以直接在网页上新建仓库、上传文件或目录。</p>
+                  </div>
+                  <div class="stat-card">
+                    <strong>""" + repositories.size() + """
+                </strong>
+                    <span>个仓库</span>
+                  </div>
+                </section>
                 """ + Html.banner(ok, error) + """
-                <p class="muted">仓库通过 Git smart HTTP 协议提供。点击仓库名可上传文件或目录；浏览器不能浏览文件内容。</p>
-                <table>
-                  <thead>
-                    <tr><th>仓库</th><th>分支</th><th>最近提交</th><th>提交时间</th><th>Clone</th></tr>
-                  </thead>
-                  <tbody>
-                """ + rows + """
-                  </tbody>
-                </table>
-
-                <div class="card">
-                  <h2>新建仓库</h2>
-                  <form method="post" action="/repos">
-                    <label for="name">仓库名（可自动补 .git）</label>
-                    <input id="name" type="text" name="name" placeholder="my-project"
-                           pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required>
-                    <button type="submit">创建</button>
+                <section class="card create-card">
+                  <form class="create-form" method="post" action="/repos">
+                    <div class="create-field">
+                      <label for="name">新建仓库</label>
+                      <input id="name" type="text" name="name" placeholder="my-project"
+                             pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required>
+                    </div>
+                    <button class="btn btn-primary" type="submit">创建仓库</button>
                   </form>
+                  <p class="hint">仓库名会自动补 .git，只允许字母、数字、点、下划线、短横线。</p>
+                </section>
+                <div class="repo-grid">
+                """ + cards + """
                 </div>
+                <script>
+                  document.querySelectorAll('[data-copy]').forEach(function (button) {
+                    button.addEventListener('click', function () {
+                      var text = button.getAttribute('data-copy');
+                      var done = function () {
+                        var original = button.textContent;
+                        button.textContent = '已复制';
+                        setTimeout(function () { button.textContent = original; }, 1200);
+                      };
+                      if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(text).then(done).catch(function () {});
+                      }
+                    });
+                  });
+                </script>
                 """;
 
-        return Html.page("Git 仓库", body);
+        return Html.page("Git 仓库", body, version);
     }
 
     private static String messageOf(Exception e) {

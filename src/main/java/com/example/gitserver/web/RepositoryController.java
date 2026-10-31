@@ -8,6 +8,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import com.example.gitserver.service.RepositoryAdminService;
 import com.example.gitserver.service.UploadedFile;
@@ -19,6 +21,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,9 +40,12 @@ public class RepositoryController {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final RepositoryAdminService adminService;
+    private final String version;
 
-    public RepositoryController(RepositoryAdminService adminService) {
+    public RepositoryController(RepositoryAdminService adminService,
+                                @Value("${app.version:dev}") String version) {
         this.adminService = adminService;
+        this.version = version;
     }
 
     @GetMapping(value = "/repo/{name}", produces = MediaType.TEXT_HTML_VALUE)
@@ -55,11 +61,13 @@ public class RepositoryController {
             }
         } catch (Exception e) {
             return Html.page("仓库不存在", """
-                    <h1>仓库不存在</h1>
-                    <p class="muted">""" + Html.escape(messageOf(e)) + """
+                    <div class="card" style="text-align:center;padding:42px 24px;">
+                      <h1>仓库不存在</h1>
+                      <p class="muted">""" + Html.escape(messageOf(e)) + """
                     </p>
-                    <p><a href="/">返回仓库列表</a></p>
-                    """);
+                      <p><a class="btn btn-primary" href="/">返回仓库列表</a></p>
+                    </div>
+                    """, version);
         }
     }
 
@@ -106,7 +114,7 @@ public class RepositoryController {
         String branch = repository.getBranch();
         String summary = "(空仓库)";
         String shortId = "-";
-        String committedAt = "-";
+        String committedAt = "尚未提交";
         List<FileView> files = new ArrayList<>();
 
         ObjectId head = repository.resolve(Constants.HEAD);
@@ -134,89 +142,217 @@ public class RepositoryController {
             files.sort(Comparator.comparing(FileView::path));
         }
 
-        StringBuilder rows = new StringBuilder();
+        StringBuilder tree = new StringBuilder();
         if (files.isEmpty()) {
-            rows.append("<tr><td colspan=\"2\" class=\"empty\">空仓库，上传文件后会生成第一个提交。</td></tr>");
-        }
-        for (FileView file : files) {
-            rows.append("<tr><td>").append(Html.escape(file.path())).append("</td><td>")
-                    .append(file.size() < 0 ? "-" : formatSize(file.size()))
-                    .append("</td></tr>");
+            tree.append("<div class=\"empty-files\">空仓库，上传文件后会生成第一个提交。</div>");
+        } else {
+            tree.append("<ul class=\"tree\">");
+            renderTree(buildTree(files), tree);
+            tree.append("</ul>");
         }
 
         String cloneUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/git/" + name).build().toUriString();
-
-        String meta = "分支 <code>" + Html.escape(branch) + "</code> · 最近提交 <code>"
-                + Html.escape(shortId) + "</code> " + Html.escape(summary)
-                + " · " + Html.escape(committedAt);
-        String cloneLine = "Clone：<code>git clone " + Html.escape(cloneUrl) + "</code>";
+        String copyButton = "<button class=\"btn btn-ghost\" type=\"button\" data-copy=\""
+                + Html.escape(cloneUrl) + "\">复制</button>";
 
         String body = """
-                <p><a href="/">← 返回仓库列表</a></p>
-                <h1>""" + Html.escape(name) + """
+                <nav class="crumbs">
+                  <a href="/">仓库</a><span>/</span><span>""" + Html.escape(name) + """
+                </span>
+                </nav>
+                <section class="repo-header">
+                  <div class="repo-title">
+                    <span class="repo-icon">""" + Html.repoIcon() + """
+                </span>
+                    <h1>""" + Html.escape(name) + """
                 </h1>
+                    <span class="badge">""" + Html.escape(branch) + """
+                </span>
+                  </div>
+                  <div class="repo-meta">
+                    <span>最近提交 <code>""" + Html.escape(shortId) + """
+                </code> """ + Html.escape(summary) + """
+                </span>
+                    <span>""" + Html.escape(committedAt) + """
+                </span>
+                  </div>
+                  <div class="clone-row" style="max-width:640px;margin-top:14px;">
+                    <code>git clone&#32;""" + Html.escape(cloneUrl) + """
+                </code>
+                    """ + copyButton + """
+                  </div>
+                </section>
                 """ + Html.banner(ok, error) + """
-                <p class="muted">""" + meta + """
-                </p>
-                <p class="muted">""" + cloneLine + """
-                </p>
-
-                <div class="card">
-                  <h2>文件</h2>
-                  <table>
-                    <thead><tr><th>路径</th><th>大小</th></tr></thead>
-                    <tbody>""" + rows + """
-                </tbody>
-                  </table>
-                </div>
-
-                <div class="card">
-                  <h2>上传文件或目录</h2>
-                  <form id="uploadForm" method="post" action="/repo/""" + Html.escape(name) + """
-                /upload" enctype="multipart/form-data">
-                    <div class="row">
-                      <div>
-                        <label for="filePicker">文件（可多选）</label>
-                        <input id="filePicker" type="file" name="files" multiple>
-                      </div>
-                      <div>
-                        <label for="dirPicker">目录（保留相对路径）</label>
-                        <input id="dirPicker" type="file" name="files" webkitdirectory multiple>
-                      </div>
-                      <div>
-                        <label for="message">提交信息</label>
-                        <input id="message" type="text" name="message" value="Upload files via web">
-                      </div>
-                      <div>
-                        <label for="author">提交人</label>
-                        <input id="author" type="text" name="author" value="Web Uploader">
-                      </div>
+                <div class="detail-grid">
+                  <section class="card files-card">
+                    <div class="card-head">
+                      <h2>文件</h2>
+                      <span class="muted small">""" + files.size() + """
+                &#32;个文件</span>
                     </div>
-                    <button type="submit">上传并提交</button>
-                  </form>
-                  <p class="muted">目录上传会保留子目录结构。文件会以一次提交写入当前分支。</p>
-                </div>
+                    """ + tree + """
+                  </section>
 
+                  <aside class="card upload-card upload-form">
+                    <div class="card-head"><h2>上传文件或目录</h2></div>
+                    <form id="uploadForm" method="post" action="/repo/""" + Html.escape(name) + """
+                /upload" enctype="multipart/form-data">
+                      <label class="dropzone" id="dropzone">
+                        <span class="dropzone-icon">
+                          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 16V4"></path>
+                            <path d="M7 9l5-5 5 5"></path>
+                            <path d="M20 16.5A3.5 3.5 0 0 0 18.5 10h-.6A6 6 0 0 0 6 11.5 3.5 3.5 0 0 0 4 18.5"></path>
+                          </svg>
+                        </span>
+                        <strong id="dropzone-title">拖拽文件到此处，或点击选择</strong>
+                        <span class="muted" id="dropzone-sub">目录请使用下方按钮</span>
+                        <input id="filePicker" type="file" name="files" multiple hidden>
+                      </label>
+                      <input id="dirPicker" type="file" name="files" webkitdirectory multiple hidden>
+                      <div class="picker-row">
+                        <button type="button" class="btn btn-ghost" id="pickFiles">选择文件</button>
+                        <button type="button" class="btn btn-ghost" id="pickDir">选择目录</button>
+                      </div>
+                      <label for="message">提交信息</label>
+                      <input id="message" type="text" name="message" value="Upload files via web">
+                      <label for="author">提交人</label>
+                      <input id="author" type="text" name="author" value="Web Uploader">
+                      <button class="btn btn-primary btn-block" type="submit">上传并提交</button>
+                    </form>
+                    <p class="hint">目录上传会保留子目录结构，所有文件以一次提交写入当前分支。</p>
+                  </aside>
+                </div>
                 <script>
-                  document.getElementById('uploadForm').addEventListener('submit', function () {
-                    this.querySelectorAll('input[name="paths"]').forEach(function (node) { node.remove(); });
-                    var inputs = [document.getElementById('filePicker'), document.getElementById('dirPicker')];
-                    for (var i = 0; i < inputs.length; i++) {
-                      var selected = inputs[i].files;
-                      for (var j = 0; j < selected.length; j++) {
-                        var hidden = document.createElement('input');
-                        hidden.type = 'hidden';
-                        hidden.name = 'paths';
-                        hidden.value = selected[j].webkitRelativePath || selected[j].name;
-                        this.appendChild(hidden);
+                  (function () {
+                    var form = document.getElementById('uploadForm');
+                    var dropzone = document.getElementById('dropzone');
+                    var filePicker = document.getElementById('filePicker');
+                    var dirPicker = document.getElementById('dirPicker');
+                    var title = document.getElementById('dropzone-title');
+                    var sub = document.getElementById('dropzone-sub');
+
+                    function updateTitle() {
+                      var count = filePicker.files.length + dirPicker.files.length;
+                      if (count > 0) {
+                        title.textContent = '已选择 ' + count + ' 个文件';
+                        sub.textContent = '点击可重新选择';
+                      } else {
+                        title.textContent = '拖拽文件到此处，或点击选择';
+                        sub.textContent = '目录请使用下方按钮';
                       }
                     }
-                  });
+
+                    filePicker.addEventListener('change', updateTitle);
+                    dirPicker.addEventListener('change', updateTitle);
+                    document.getElementById('pickFiles').addEventListener('click', function () { filePicker.click(); });
+                    document.getElementById('pickDir').addEventListener('click', function () { dirPicker.click(); });
+
+                    ['dragenter', 'dragover'].forEach(function (name) {
+                      dropzone.addEventListener(name, function (event) {
+                        event.preventDefault();
+                        dropzone.classList.add('dragging');
+                      });
+                    });
+                    ['dragleave', 'drop'].forEach(function (name) {
+                      dropzone.addEventListener(name, function (event) {
+                        event.preventDefault();
+                        dropzone.classList.remove('dragging');
+                      });
+                    });
+                    dropzone.addEventListener('drop', function (event) {
+                      if (event.dataTransfer && event.dataTransfer.files.length) {
+                        try {
+                          filePicker.files = event.dataTransfer.files;
+                          updateTitle();
+                        } catch (e) {
+                          sub.textContent = '该浏览器不支持拖拽，请点击选择';
+                        }
+                      }
+                    });
+
+                    form.addEventListener('submit', function () {
+                      form.querySelectorAll('input[name="paths"]').forEach(function (node) { node.remove(); });
+                      [filePicker, dirPicker].forEach(function (input) {
+                        for (var i = 0; i < input.files.length; i++) {
+                          var file = input.files[i];
+                          var hidden = document.createElement('input');
+                          hidden.type = 'hidden';
+                          hidden.name = 'paths';
+                          hidden.value = file.webkitRelativePath || file.name;
+                          form.appendChild(hidden);
+                        }
+                      });
+                    });
+
+                    document.querySelectorAll('[data-copy]').forEach(function (button) {
+                      button.addEventListener('click', function () {
+                        var text = button.getAttribute('data-copy');
+                        var done = function () {
+                          var original = button.textContent;
+                          button.textContent = '已复制';
+                          setTimeout(function () { button.textContent = original; }, 1200);
+                        };
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                          navigator.clipboard.writeText(text).then(done).catch(function () {});
+                        }
+                      });
+                    });
+                  })();
                 </script>
                 """;
 
-        return Html.page(name, body);
+        return Html.page(name, body, version);
+    }
+
+    private static Node buildTree(List<FileView> files) {
+        Node root = new Node("", true);
+        for (FileView file : files) {
+            String[] parts = file.path().split("/");
+            Node current = root;
+            for (int i = 0; i < parts.length; i++) {
+                boolean leaf = i == parts.length - 1;
+                Node child = current.children.get(parts[i]);
+                if (child == null) {
+                    child = new Node(parts[i], !leaf);
+                    current.children.put(parts[i], child);
+                }
+                if (leaf) {
+                    child.size = file.size();
+                }
+                current = child;
+            }
+        }
+        return root;
+    }
+
+    private static void renderTree(Node node, StringBuilder out) {
+        List<Node> directories = new ArrayList<>();
+        List<Node> files = new ArrayList<>();
+        for (Node child : node.children.values()) {
+            (child.directory ? directories : files).add(child);
+        }
+        directories.sort(Comparator.comparing(child -> child.name, String.CASE_INSENSITIVE_ORDER));
+        files.sort(Comparator.comparing(child -> child.name, String.CASE_INSENSITIVE_ORDER));
+
+        for (Node directory : directories) {
+            out.append("<li class=\"tree-item\"><div class=\"dir-row\"><span class=\"folder-icon\">")
+                    .append(Html.folderIcon())
+                    .append("</span><span class=\"file-name\">").append(Html.escape(directory.name))
+                    .append("</span></div><ul>");
+            renderTree(directory, out);
+            out.append("</ul></li>");
+        }
+        for (Node file : files) {
+            out.append("<li class=\"tree-item\"><div class=\"file-row\"><span class=\"file-icon\">")
+                    .append(Html.fileIcon())
+                    .append("</span><span class=\"file-name\">").append(Html.escape(file.name))
+                    .append("</span><span class=\"file-size\">")
+                    .append(file.size < 0 ? "-" : formatSize(file.size))
+                    .append("</span></div></li>");
+        }
     }
 
     private static String formatSize(long bytes) {
@@ -235,5 +371,17 @@ public class RepositoryController {
     }
 
     private record FileView(String path, long size) {
+    }
+
+    private static final class Node {
+        private final String name;
+        private final boolean directory;
+        private final Map<String, Node> children = new TreeMap<>();
+        private long size = -1;
+
+        private Node(String name, boolean directory) {
+            this.name = name;
+            this.directory = directory;
+        }
     }
 }
