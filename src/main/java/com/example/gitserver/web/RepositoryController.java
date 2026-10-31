@@ -147,20 +147,20 @@ public class RepositoryController {
         String cloneUrl = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/git/" + name).build().toUriString();
 
+        String meta = "分支 <code>" + Html.escape(branch) + "</code> · 最近提交 <code>"
+                + Html.escape(shortId) + "</code> " + Html.escape(summary)
+                + " · " + Html.escape(committedAt);
+        String cloneLine = "Clone：<code>git clone " + Html.escape(cloneUrl) + "</code>";
+
         String body = """
                 <p><a href="/">← 返回仓库列表</a></p>
                 <h1>""" + Html.escape(name) + """
                 </h1>
                 """ + Html.banner(ok, error) + """
-                <p class="muted">
-                  分支 <code>""" + Html.escape(branch) + """
-                </code> ·
-                  最近提交 <code>""" + Html.escape(shortId) + """
-                </code> """ + Html.escape(summary) + """
-                 · """ + Html.escape(committedAt) + """
+                <p class="muted">""" + meta + """
                 </p>
-                <p class="muted">Clone：<code>git clone """ + Html.escape(cloneUrl) + """
-                </code></p>
+                <p class="muted">""" + cloneLine + """
+                </p>
 
                 <div class="card">
                   <h2>文件</h2>
