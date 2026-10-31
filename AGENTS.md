@@ -33,9 +33,9 @@ Single Maven module, no tests, no lint/formatter config, no CI.
   Push is enabled and unauthenticated by default; set `app.git.allow-push=false`
   to disable. No Spring Security is wired up.
 - Web write paths: `POST /repos` (`RepositoryListController`) creates a bare repo;
-  `POST /repo/{name}/upload` (`RepositoryController`) commits uploaded files via
-  `RepositoryAdminService`, which does temp clone -> write -> commit -> push back.
-  Writes are serialized per repo with a `ReentrantLock`.
+  `POST /repo/{name}/upload` and `POST /repo/{name}/delete` (`RepositoryController`)
+  commit changes via `RepositoryAdminService`, which does temp clone -> edit ->
+  commit -> push back. Writes are serialized per repo with a `ReentrantLock`.
 - `RepositoryAdminService.canonicalName` appends `.git`, so `/repo/demo` and
   `/repo/demo.git` both work. Git protocol URLs still require `.git`.
 - File downloads use `GET /repo/{name}/raw/{path}` (`RepositoryController.download`),

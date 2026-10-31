@@ -41,6 +41,7 @@ git clone http://localhost:8080/git/demo.git
 | `GET /repo/{name}` | 仓库详情：文件列表 + 上传表单（`{name}` 带不带 `.git` 都可以） |
 | `GET /repo/{name}/raw/{path}` | 下载文件（HEAD 版本，`Content-Disposition: attachment`） |
 | `POST /repo/{name}/upload` | 上传并提交，`multipart/form-data` |
+| `POST /repo/{name}/delete` | 删除文件，表单字段 `path` |
 | `GET /git/{repo}.git/...` | Git smart HTTP 协议端点，**必须带 `.git`** |
 | `GET /git/demo` | 返回 404，属于正常行为 |
 
@@ -59,6 +60,8 @@ git clone http://localhost:8080/git/demo.git
 - 填写提交信息和提交人。
 
 一次上传会生成一个提交并写入当前分支。上传到空仓库时会创建第一个提交；上传到已有仓库时会基于最新提交追加。
+
+文件列表每一行都有删除按钮，删除单个文件同样会生成一个提交。
 
 ## 配置
 
@@ -168,7 +171,7 @@ git clone http://localhost:8080/git/web-test.git /tmp/web-test
 - **没有鉴权**：网页建仓、网页上传和 `git push` 默认都对所有人开放，仅适合本地开发/原型。生产环境应关闭 `allow-push`，并在 `/git/*`、`/repos`、`/repo/*` 前接入 Spring Security 或网关鉴权。
 - **不是代码浏览 Web UI**：不支持查看文件内容、diff、提交历史。
 - **仓库名为单层**：不支持 `group/project.git` 这类多级命名。
-- **上传只增不删**：网页上传不会删除仓库中已有的文件。
+- **删除为单文件操作**：网页删除按文件进行，不提供整目录或批量删除。
 - **存储为本地裸仓库**：单机文件系统，多实例共享需要额外的分布式锁与共享存储。
 - **无 Git LFS 服务端**：大文件需自行实现 LFS batch API。
 - **无测试套件**：`mvn test` 不会执行任何用例，按上面的命令手动验证。

@@ -121,6 +121,21 @@ public class RepositoryController {
         return "redirect:/repo/" + repoName;
     }
 
+    @PostMapping("/repo/{name}/delete")
+    public String delete(@PathVariable String name,
+                         @RequestParam String path,
+                         RedirectAttributes redirect) {
+        String repoName = RepositoryAdminService.canonicalName(name);
+        try {
+            adminService.deleteFiles(repoName, List.of(path), "Delete " + path,
+                    new PersonIdent("Web Uploader", "web@example.com"));
+            redirect.addAttribute("ok", "已删除 " + path);
+        } catch (Exception e) {
+            redirect.addAttribute("error", messageOf(e));
+        }
+        return "redirect:/repo/" + repoName;
+    }
+
     @GetMapping("/repo/{name}/raw/{*path}")
     public ResponseEntity<StreamingResponseBody> download(@PathVariable String name,
                                                           @PathVariable String path) {
@@ -383,6 +398,15 @@ public class RepositoryController {
                         }
                       });
                     });
+
+                    document.querySelectorAll('form.delete-form').forEach(function (form) {
+                      form.addEventListener('submit', function (event) {
+                        var name = form.getAttribute('data-name') || '';
+                        if (!window.confirm('确定删除 “' + name + '” 吗？')) {
+                          event.preventDefault();
+                        }
+                      });
+                    });
                   })();
                 </script>
                 """;
@@ -444,7 +468,12 @@ public class RepositoryController {
                     .append(file.size < 0 ? "-" : formatSize(file.size))
                     .append("</span><a class=\"file-download\" href=\"").append(href)
                     .append("\" download title=\"下载\">").append(Html.downloadIcon())
-                    .append("</a></div></li>");
+                    .append("</a><form class=\"delete-form\" method=\"post\" action=\"/repo/")
+                    .append(Html.escape(repoName)).append("/delete\" data-name=\"")
+                    .append(Html.escape(file.name)).append("\"><input type=\"hidden\" name=\"path\" value=\"")
+                    .append(Html.escape(file.path)).append("\"><button class=\"file-delete\" type=\"submit\"")
+                    .append(" title=\"删除\">").append(Html.trashIcon())
+                    .append("</button></form></div></li>");
         }
     }
 

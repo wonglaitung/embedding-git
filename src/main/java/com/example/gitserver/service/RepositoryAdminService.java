@@ -13,6 +13,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import com.example.gitserver.config.GitProperties;
 
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.RmCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -115,6 +116,58 @@ public class RepositoryAdminService {
         }
     }
 
+    public void deleteFiles(String repoName, List<String> paths, String message, PersonIdent author)
+            throws IOException, GitAPIException, URISyntaxException {
+        if (paths == null || paths.isEmpty()) {
+            throw new IllegalArgumentException("没有指定要删除的文件");
+        }
+
+        Path bareDirectory = resolveExisting(repoName);
+        ReentrantLock lock = lock(repoName);
+        lock.lock();
+
+        Path workTree = Files.createTempDirectory("git-delete-");
+        try {
+            String branch;
+            try (Repository bare = open(bareDirectory)) {
+                branch = bare.getBranch();
+            }
+            if (branch == null || branch.isBlank()) {
+                branch = DEFAULT_BRANCH;
+            }
+
+            try (Git git = prepareWorkTree(workTree, bareDirectory, branch)) {
+                String localBranch = git.getRepository().getBranch();
+                RmCommand rm = git.rm();
+                for (String path : paths) {
+                    String cleanPath = normalizePath(path);
+                    Path target = safeResolve(workTree, cleanPath);
+                    if (Files.isDirectory(target)) {
+                        throw new IllegalArgumentException("不能删除目录：" + cleanPath);
+                    }
+                    if (!Files.deleteIfExists(target)) {
+                        throw new IllegalArgumentException("文件不存在：" + cleanPath);
+                    }
+                    rm.addFilepattern(cleanPath);
+                }
+                rm.call();
+                git.commit()
+                        .setMessage(message)
+                        .setAuthor(author)
+                        .setCommitter(author)
+                        .call();
+                git.push()
+                        .setRemote("origin")
+                        .add("refs/heads/" + localBranch + ":refs/heads/" + localBranch)
+                        .call();
+            }
+            log.info("Deleted {} file(s) from {}", paths.size(), repoName);
+        } finally {
+            deleteRecursively(workTree);
+            lock.unlock();
+        }
+    }
+
     public static String canonicalName(String name) {
         if (name == null || name.isBlank()) {
             return name;
@@ -162,7 +215,7 @@ public class RepositoryAdminService {
                 .call();
     }
 
-    private Path safeResolve(Path base, String rawPath) {
+    private static String normalizePath(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             throw new IllegalArgumentException("文件路径为空");
         }
@@ -177,6 +230,11 @@ public class RepositoryAdminService {
                 throw new IllegalArgumentException("非法文件路径：" + rawPath);
             }
         }
+        return cleaned;
+    }
+
+    private Path safeResolve(Path base, String rawPath) {
+        String cleaned = normalizePath(rawPath);
         Path target = base.resolve(cleaned).normalize();
         if (!target.startsWith(base)) {
             throw new IllegalArgumentException("非法文件路径：" + rawPath);
