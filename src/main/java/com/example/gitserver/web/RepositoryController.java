@@ -1,6 +1,7 @@
 package com.example.gitserver.web;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -15,6 +16,8 @@ import com.example.gitserver.service.RepositoryAdminService;
 import com.example.gitserver.service.UploadedFile;
 
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
@@ -22,7 +25,12 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,8 +38,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriUtils;
 
 @Controller
 public class RepositoryController {
@@ -110,6 +121,78 @@ public class RepositoryController {
         return "redirect:/repo/" + repoName;
     }
 
+    @GetMapping("/repo/{name}/raw/{*path}")
+    public ResponseEntity<StreamingResponseBody> download(@PathVariable String name,
+                                                          @PathVariable String path) {
+        String repoName = RepositoryAdminService.canonicalName(name);
+        String cleanPath = normalizeRepoPath(path);
+        String fileName = cleanPath.substring(cleanPath.lastIndexOf('/') + 1);
+
+        Path directory;
+        try {
+            directory = adminService.resolveExisting(repoName);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "仓库不存在", e);
+        }
+
+        ObjectId blobId;
+        long size;
+        try (Repository repository = adminService.open(directory)) {
+            ObjectId head = repository.resolve(Constants.HEAD);
+            if (head == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "仓库为空");
+            }
+            try (RevWalk walk = new RevWalk(repository)) {
+                RevCommit commit = walk.parseCommit(head);
+                try (TreeWalk treeWalk = TreeWalk.forPath(repository, cleanPath, commit.getTree())) {
+                    if (treeWalk == null) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "文件不存在：" + cleanPath);
+                    }
+                    if (treeWalk.getFileMode(0) == FileMode.TREE) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "目录不能直接下载");
+                    }
+                    blobId = treeWalk.getObjectId(0);
+                    ObjectLoader loader = repository.open(blobId);
+                    size = loader.getSize();
+                }
+            }
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "读取文件失败", e);
+        }
+
+        StreamingResponseBody stream = output -> {
+            try (Repository repository = adminService.open(directory)) {
+                repository.open(blobId).copyTo(output);
+            }
+        };
+
+        MediaType mediaType = MediaTypeFactory.getMediaType(fileName)
+                .orElse(MediaType.APPLICATION_OCTET_STREAM);
+        ContentDisposition disposition = ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build();
+
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .contentLength(size)
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .body(stream);
+    }
+
+    private static String normalizeRepoPath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文件路径为空");
+        }
+        String cleaned = rawPath.replace('\\', '/').replaceAll("^/+", "");
+        for (String segment : cleaned.split("/")) {
+            if (segment.isBlank() || segment.equals(".") || segment.equals("..")
+                    || segment.equalsIgnoreCase(".git")) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "非法文件路径：" + rawPath);
+            }
+        }
+        return cleaned;
+    }
+
     private String render(String name, Repository repository, String ok, String error) throws IOException {
         String branch = repository.getBranch();
         String summary = "(空仓库)";
@@ -147,7 +230,7 @@ public class RepositoryController {
             tree.append("<div class=\"empty-files\">空仓库，上传文件后会生成第一个提交。</div>");
         } else {
             tree.append("<ul class=\"tree\">");
-            renderTree(buildTree(files), tree);
+            renderTree(name, buildTree(files), tree);
             tree.append("</ul>");
         }
 
@@ -308,15 +391,20 @@ public class RepositoryController {
     }
 
     private static Node buildTree(List<FileView> files) {
-        Node root = new Node("", true);
+        Node root = new Node("", "", true);
         for (FileView file : files) {
             String[] parts = file.path().split("/");
             Node current = root;
+            StringBuilder path = new StringBuilder();
             for (int i = 0; i < parts.length; i++) {
                 boolean leaf = i == parts.length - 1;
+                if (path.length() > 0) {
+                    path.append('/');
+                }
+                path.append(parts[i]);
                 Node child = current.children.get(parts[i]);
                 if (child == null) {
-                    child = new Node(parts[i], !leaf);
+                    child = new Node(parts[i], path.toString(), !leaf);
                     current.children.put(parts[i], child);
                 }
                 if (leaf) {
@@ -328,7 +416,7 @@ public class RepositoryController {
         return root;
     }
 
-    private static void renderTree(Node node, StringBuilder out) {
+    private static void renderTree(String repoName, Node node, StringBuilder out) {
         List<Node> directories = new ArrayList<>();
         List<Node> files = new ArrayList<>();
         for (Node child : node.children.values()) {
@@ -342,16 +430,21 @@ public class RepositoryController {
                     .append(Html.folderIcon())
                     .append("</span><span class=\"file-name\">").append(Html.escape(directory.name))
                     .append("</span></div><ul>");
-            renderTree(directory, out);
+            renderTree(repoName, directory, out);
             out.append("</ul></li>");
         }
         for (Node file : files) {
+            String href = "/repo/" + repoName + "/raw/"
+                    + UriUtils.encodePath(file.path, StandardCharsets.UTF_8);
             out.append("<li class=\"tree-item\"><div class=\"file-row\"><span class=\"file-icon\">")
                     .append(Html.fileIcon())
-                    .append("</span><span class=\"file-name\">").append(Html.escape(file.name))
-                    .append("</span><span class=\"file-size\">")
+                    .append("</span><a class=\"file-name file-link\" href=\"").append(href)
+                    .append("\">").append(Html.escape(file.name)).append("</a>")
+                    .append("<span class=\"file-size\">")
                     .append(file.size < 0 ? "-" : formatSize(file.size))
-                    .append("</span></div></li>");
+                    .append("</span><a class=\"file-download\" href=\"").append(href)
+                    .append("\" download title=\"下载\">").append(Html.downloadIcon())
+                    .append("</a></div></li>");
         }
     }
 
@@ -375,12 +468,14 @@ public class RepositoryController {
 
     private static final class Node {
         private final String name;
+        private final String path;
         private final boolean directory;
         private final Map<String, Node> children = new TreeMap<>();
         private long size = -1;
 
-        private Node(String name, boolean directory) {
+        private Node(String name, String path, boolean directory) {
             this.name = name;
+            this.path = path;
             this.directory = directory;
         }
     }

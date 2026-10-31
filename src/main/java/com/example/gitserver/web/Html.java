@@ -212,6 +212,10 @@ public final class Html {
                     .folder-icon { color: var(--brand); flex: none; display: inline-flex; }
                     .file-name { overflow-wrap: anywhere; }
                     .file-size { margin-left: auto; padding-left: 12px; color: var(--muted); font-family: var(--mono); font-size: .74rem; flex: none; }
+                    .file-link { color: var(--text); text-decoration: none; }
+                    .file-link:hover { color: var(--brand); text-decoration: underline; }
+                    .file-download { margin-left: 10px; color: var(--muted); display: inline-flex; flex: none; }
+                    .file-download:hover { color: var(--brand); }
                     .empty-files { color: var(--muted); text-align: center; padding: 30px 10px; font-size: .9rem; }
                     .dropzone {
                       display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
@@ -296,6 +300,17 @@ public final class Html {
                      stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                   <path d="M14 2v6h6"></path>
+                </svg>
+                """;
+    }
+
+    public static String downloadIcon() {
+        return """
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3v12"></path>
+                  <path d="M7 10l5 5 5-5"></path>
+                  <path d="M5 21h14"></path>
                 </svg>
                 """;
     }

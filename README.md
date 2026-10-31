@@ -39,11 +39,12 @@ git clone http://localhost:8080/git/demo.git
 | `GET /` | 仓库列表 + 新建仓库表单 |
 | `POST /repos` | 创建仓库，表单字段 `name` |
 | `GET /repo/{name}` | 仓库详情：文件列表 + 上传表单（`{name}` 带不带 `.git` 都可以） |
+| `GET /repo/{name}/raw/{path}` | 下载文件（HEAD 版本，`Content-Disposition: attachment`） |
 | `POST /repo/{name}/upload` | 上传并提交，`multipart/form-data` |
 | `GET /git/{repo}.git/...` | Git smart HTTP 协议端点，**必须带 `.git`** |
 | `GET /git/demo` | 返回 404，属于正常行为 |
 
-浏览器不能浏览仓库文件内容，只能看到文件路径和大小；完整历史请用 Git 客户端查看。
+文件列表中的文件名和下载图标都可以直接下载文件；浏览器不能浏览文件内容或历史，完整历史请用 Git 客户端查看。
 
 ### 新建仓库
 
@@ -78,6 +79,8 @@ app:
     root: ./repos      # 裸仓库根目录
     seed-demo: true    # 启动时自动创建 demo.git
     allow-push: true   # 是否允许 git push
+    gc-enabled: true   # 是否启用定时 GC
+    gc-cron: "0 0 3 * * *"  # GC 时间（Spring 6 段 cron）
 ```
 
 | 配置项 | 默认值 | 说明 |
@@ -85,6 +88,8 @@ app:
 | `app.git.root` | `./repos` | 裸仓库所在目录，URL 中的 `{repo}.git` 会映射到该目录下 |
 | `app.git.seed-demo` | `true` | 启动时若 `demo.git` 不存在则生成示例仓库 |
 | `app.git.allow-push` | `true` | 关闭后 `git push` 返回 `service not enabled` |
+| `app.git.gc-enabled` | `true` | 是否启用定时 GC |
+| `app.git.gc-cron` | `0 0 3 * * *` | GC 执行时间，默认每天 03:00 |
 | `spring.servlet.multipart.*` | 见上 | 网页上传的单文件/请求大小上限 |
 
 `repos/` 属于运行时数据，已被 `.gitignore` 忽略。删除后可重新生成示例仓库。
@@ -167,4 +172,4 @@ git clone http://localhost:8080/git/web-test.git /tmp/web-test
 - **存储为本地裸仓库**：单机文件系统，多实例共享需要额外的分布式锁与共享存储。
 - **无 Git LFS 服务端**：大文件需自行实现 LFS batch API。
 - **无测试套件**：`mvn test` 不会执行任何用例，按上面的命令手动验证。
-- JGit 对 push 的 pack 不做 delta 压缩，长期使用建议定期执行 GC。
+- JGit 对 push 的 pack 不做 delta 压缩；内置定时 GC（默认每天 03:00）会合并 pack 并生成 bitmap，可用 `app.git.gc-*` 调整或关闭。

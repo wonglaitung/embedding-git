@@ -13,6 +13,8 @@ app:
     root: ./repos
     seed-demo: true
     allow-push: true
+    gc-enabled: true
+    gc-cron: "0 0 3 * * *"
 
 logging:
   level:

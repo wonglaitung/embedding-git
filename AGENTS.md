@@ -38,8 +38,14 @@ Single Maven module, no tests, no lint/formatter config, no CI.
   Writes are serialized per repo with a `ReentrantLock`.
 - `RepositoryAdminService.canonicalName` appends `.git`, so `/repo/demo` and
   `/repo/demo.git` both work. Git protocol URLs still require `.git`.
+- File downloads use `GET /repo/{name}/raw/{path}` (`RepositoryController.download`),
+  streaming the blob at HEAD via `StreamingResponseBody`; paths are validated and
+  the response is `Content-Disposition: attachment`.
 - Add business logic in the factories via `PreReceiveHook`, `PostReceiveHook`,
   `AdvertiseRefsHook`, not in the list controller.
+- `RepositoryGcService` runs `git.gc()` for every bare repo on a schedule
+  (`app.git.gc-cron`, default daily 03:00; disable with `app.git.gc-enabled=false`).
+  `@EnableScheduling` is on the application class.
 - Config binds from `app.git.*` in `application.yml` into `GitProperties`.
 
 ## Toolchain gotchas
@@ -58,3 +64,6 @@ Single Maven module, no tests, no lint/formatter config, no CI.
 - Multipart limits live under `spring.servlet.multipart` (20MB file / 200MB request).
 - WSL2: the app binds `*:8080`. If a Windows browser on `localhost:8080` shows a
   different service, use the WSL IP (`hostname -I`).
+- Stop the running server before `mvn package`/rebuild. Rebuilding rewrites the fat
+  jar in place; a running JVM can then hang on lazy class loading (Git endpoints
+  stop responding) until restarted.
