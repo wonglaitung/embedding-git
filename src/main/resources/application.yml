@@ -1,0 +1,13 @@
+server:
+  port: 8080
+
+app:
+  git:
+    root: ./repos
+    seed-demo: true
+    allow-push: true
+
+logging:
+  level:
+    com.example.gitserver: INFO
+    org.eclipse.jgit: WARN
